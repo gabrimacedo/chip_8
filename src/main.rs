@@ -1,33 +1,37 @@
 fn main() {
-    // reserve the 4kb of ram
     let mut processor = Chip8::new();
 
-    // let counter = &memory[512];
-
     // fetch instruction from memory 0 and forth
-    // read 2 adressses from counter pointer
-    // let a = *counter;
-    // counter = &memory[513];
-    // let b = *counter;
-    // let ab: u16 = a << 8;
+    let code = processor.fetch();
 
     // decode instruction
-    processor.decode(0x8123);
+    processor.decode(code);
 
     // execute instruction
 }
 
 struct Chip8 {
-    memory: Vec<u8>,
-    registers: Vec<u8>,
+    memory: [u8; 4096],
+    registers: [u8; 16],
+    pc: u16,
+    i: u16,
 }
 
 impl Chip8 {
     fn new() -> Self {
         Chip8 {
-            memory: vec![0; 4096],
-            registers: vec![0; 15],
+            memory: [0; 4096],
+            registers: [0; 16],
+            i: 0,
+            pc: 0,
         }
+    }
+
+    fn fetch(&self) -> u16 {
+        let high = self.memory[self.pc as usize] as u16;
+        let low = self.memory[(self.pc + 1) as usize];
+
+        (high << 2) + (low as u16)
     }
 
     fn v(&self, reg: u16) -> u8 {
@@ -39,63 +43,58 @@ impl Chip8 {
 
     fn decode(&mut self, code: u16) {
         let op_code = code >> 12;
-        let x = (code >> 8) & 0xf;
-        let y = (code >> 4) & 0xf;
         let adrr = code >> 4;
         let nibble = code & 0xf;
         let kk = (code & 0xff) as u8;
+        let x = (code >> 8) & 0xf;
+        let y = (code >> 4) & 0xf;
+        let vx = self.v(x);
+        let vy = self.v(y);
 
-        let mut counter = 2;
+        self.pc += 2;
 
         match op_code {
             0 => todo!(),
             1 => todo!(),
             2 => todo!(),
             3 => {
-                if self.v(x) == kk {
-                    counter += 2
+                if vx == kk {
+                    self.pc += 2
                 }
             }
             4 => {
-                if self.v(x) != kk {
-                    counter += 2
+                if vx != kk {
+                    self.pc += 2
                 }
             }
             5 => {
-                if self.v(x) == self.v(y) {
-                    counter += 2
+                if vx == vy {
+                    self.pc += 2
                 }
             }
-            6 => todo!(),
-            7 => todo!(),
+            6 => self.set_v(x, kk),
+            7 => self.set_v(x, vx + kk),
             8 => {
                 match nibble {
-                    0 => self.set_v(x, self.v(y)),
-
-                    1 => {
-                        // set Vx = Vx OR Vy
-                    }
-                    2 => {
-                        // set Vx = Vx AND Vy
-                    }
-                    3 => {
-                        // set Vx = Vx XOR Vy
-                    }
+                    0 => self.set_v(x, vy),
+                    1 => self.set_v(x, vx | vy),
+                    2 => self.set_v(x, vx & vy),
+                    3 => self.set_v(x, vx ^ vy),
                     4 => {
-                        // set Vx = Vx + Vy, set VF = carry
+                        let sum = vx as u16 + vy as u16;
+                        self.set_v(x, sum as u8);
+                        self.set_v(0xf, (sum > 255) as u8);
                     }
                     5 => {
-                        // Set Vx = Vx - Vy, set VF = NOT borrow
+                        self.set_v(0xf, (vx >= vy) as u8);
+                        self.set_v(x, vx.wrapping_sub(vy));
                     }
-                    6 => {
-                        // Set Vx = Vx SHR 1
-                    }
-                    7 => {
-                        // Set Vx = Vy - Vx, set VF = NOT borrow
-                    }
-                    0xE => {
-                        // Set Vx = Vx SHL 1
-                    }
+                    // Set Vx = Vx SHR 1
+                    6 => {}
+                    // Set Vx = Vy - Vx, set VF = NOT borrow
+                    7 => {}
+                    // Set Vx = Vx SHL 1
+                    0xE => {}
                     _ => todo!(),
                 }
             }
@@ -108,18 +107,13 @@ impl Chip8 {
             15 => todo!(),
             _ => todo!(),
         }
-        println!("Counter is {counter}")
+        println!("Counter is {}", self.pc)
     }
 }
 
 #[cfg(test)]
 mod test {
-    #[test]
-    fn get_op_code() {
-        // let code = 0x8123;
-        // let codeb = 0xe123;
 
-        // assert_eq!(res, "");
-        // assert_eq!(resb, "SIr, its an E code!");
-    }
+    #[test]
+    fn fetch_correct_code() {}
 }
