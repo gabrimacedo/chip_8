@@ -20,24 +20,9 @@ fn main() {
     let two: &[u8] = &[0xf0, 0x10, 0xf0, 0x80, 0xf0];
     let zero: &[u8] = &[0xf0, 0x90, 0x90, 0x90, 0xf0];
 
-    for (i, byte) in four.iter().enumerate() {
-        // coords are (3,5)
-        // that is 3rd line, 63 - 5 bit
-        let x = (*byte as u64) << 52;
-        chip.display[3 + i] ^= x;
-    }
-    for (i, byte) in two.iter().enumerate() {
-        // coords are (3,5)
-        // that is 3rd line, 63 - 5 bit
-        let x = (*byte as u64) << 47;
-        chip.display[3 + i] ^= x;
-    }
-    for (i, byte) in zero.iter().enumerate() {
-        // coords are (3,5)
-        // that is 3rd line, 63 - 5 bit
-        let x = (*byte as u64) << 42;
-        chip.display[3 + i] ^= x;
-    }
+    chip.load_sprite((5, 7), four);
+    chip.load_sprite((10, 7), two);
+    chip.load_sprite((15, 7), zero);
 
     chip.print_display();
 }
@@ -45,23 +30,32 @@ fn main() {
 struct Chip8 {
     memory: [u8; 4096],
     registers: [u8; 16],
+    display: [u64; 32],
     pc: u16,
     i: u16,
     rng: ThreadRng,
-    display: [u64; 32],
 }
 
 impl Chip8 {
+    fn load_sprite(&mut self, (x, y): (u8, usize), sprite: &[u8]) {
+        for (i, byte) in sprite.iter().enumerate() {
+            let z = (*byte as u64) << (63 - 8 - x);
+            self.display[y + i] ^= z;
+        }
+    }
+
     fn new() -> Self {
         Chip8 {
             memory: [0; 4096],
             registers: [0; 16],
+            display: [0; 32],
             i: 0,
             pc: 0x200,
             rng: rand::thread_rng(),
-            display: [0; 32],
         }
     }
+
+    fn clear_display(&self) {}
 
     fn print_display(&self) {
         for line in self.display {
@@ -122,6 +116,9 @@ impl Chip8 {
         self.pc += 2;
 
         match op_code {
+            0 => todo!(),
+            1 => self.pc = adrr,
+            2 => todo!(),
             3 => {
                 if vx == kk {
                     self.pc += 2
@@ -165,7 +162,7 @@ impl Chip8 {
                     self.set_v(0xf, ((vx >> 7) & 0x1 == 1) as u8);
                     self.set_v(x, vx << 1);
                 }
-                _ => todo!(),
+                _ => println!("Invalid instruction code: {op_code}"),
             },
             9 => {
                 if vx != vy {
@@ -181,7 +178,7 @@ impl Chip8 {
             0xD => todo!(),
             0xE => todo!(),
             0xF => todo!(),
-            _ => println!("dont look here yet, code is {op_code}"),
+            _ => println!("Invalid instruction code: {op_code}"),
         }
         println!("Counter is {}", self.pc)
     }
