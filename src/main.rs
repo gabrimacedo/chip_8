@@ -13,18 +13,12 @@ fn main() {
         // decode instruction
         chip.decode(op);
         // execute instruction
-        dbg!(chip.v(0));
+        dbg!(&chip.v(0));
     }
 
     let four: &[u8] = &[0x90, 0x90, 0xf0, 0x10, 0x10];
     let two: &[u8] = &[0xf0, 0x10, 0xf0, 0x80, 0xf0];
     let zero: &[u8] = &[0xf0, 0x90, 0x90, 0x90, 0xf0];
-
-    chip.load_sprite((5, 7), four);
-    chip.load_sprite((10, 7), two);
-    chip.load_sprite((15, 7), zero);
-
-    chip.print_display();
 }
 
 struct Chip8 {
@@ -37,13 +31,6 @@ struct Chip8 {
 }
 
 impl Chip8 {
-    fn load_sprite(&mut self, (x, y): (u8, usize), sprite: &[u8]) {
-        for (i, byte) in sprite.iter().enumerate() {
-            let z = (*byte as u64) << (63 - 8 - x);
-            self.display[y + i] ^= z;
-        }
-    }
-
     fn new() -> Self {
         Chip8 {
             memory: [0; 4096],
@@ -52,6 +39,14 @@ impl Chip8 {
             i: 0,
             pc: 0x200,
             rng: rand::thread_rng(),
+        }
+    }
+
+    fn load_sprite_data(display: &mut [u64; 32], (x, y): (u8, u8), sprite: &[u8]) {
+        // TODO: make it prettier danmit
+        for (i, byte) in sprite.iter().enumerate() {
+            let z = (*byte as u64) << (63 - 8 - x);
+            display[(y + i as u8) as usize] ^= z;
         }
     }
 
@@ -99,6 +94,7 @@ impl Chip8 {
     fn v(&self, reg: u16) -> u8 {
         self.registers[reg as usize]
     }
+
     fn set_v(&mut self, reg: u16, value: u8) {
         self.registers[reg as usize] = value;
     }
@@ -175,7 +171,11 @@ impl Chip8 {
                 let r = self.rng.r#gen::<u8>();
                 self.set_v(x, r & kk);
             }
-            0xD => todo!(),
+            0xD => {
+                let sprite_data = &self.memory[self.i as usize..(self.i + nibble) as usize];
+                Chip8::load_sprite_data(&mut self.display, (vx, vy), sprite_data); // todo pass vf
+                self.print_display();
+            }
             0xE => todo!(),
             0xF => todo!(),
             _ => println!("Invalid instruction code: {op_code}"),
