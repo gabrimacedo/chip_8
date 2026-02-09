@@ -4,8 +4,8 @@ fn main() {
     let mut chip = Chip8::new();
 
     let instructions = [
-        0x6100, // load coord (x) 30 into v1
-        0x620B, // load coord (y) 11 into v2
+        0x611C, // load coord (x) 30 into v1
+        0x621C, // load coord (y) 11 into v2
         0xA032, // Set I to adrress of sprite 'A'
         0xD125, // display 5 bytes wide letter stored in I
                 // 0x620D, // load coord (y) 13 into v2
@@ -79,7 +79,7 @@ impl Chip8 {
             let overflow = (x % 64) as u32;
             let data = ((*sprite_byte as u64) << 56).rotate_right(overflow);
 
-            let line = &mut display[(y as usize) + row];
+            let line = &mut display[((y as usize) + row) % 32];
 
             // check collision
             if data & *line != 0 {
