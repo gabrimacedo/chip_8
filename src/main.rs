@@ -4,13 +4,13 @@ fn main() {
     let mut chip = Chip8::new();
 
     let instructions = [
-        0x611E, // load coord (x) 30 into v1
+        0x6100, // load coord (x) 30 into v1
         0x620B, // load coord (y) 11 into v2
         0xA032, // Set I to adrress of sprite 'A'
         0xD125, // display 5 bytes wide letter stored in I
-        0x620D, // load coord (y) 13 into v2
-        0xA041, // Set I to adrress of sprite 'D'
-        0xD125, // display 5 bytes wide letter stored in I
+                // 0x620D, // load coord (y) 13 into v2
+                // 0xA041, // Set I to adrress of sprite 'D'
+                // 0xD125, // display 5 bytes wide letter stored in I
     ];
 
     chip.load_instructions(&instructions);
@@ -73,36 +73,29 @@ impl Chip8 {
     }
 
     fn draw(display: &mut [u64; 32], (x, y): (u8, u8), vf: &mut u8, sprite: &[u8]) {
-        // load to buffer
-        for (i, byte) in sprite.iter().enumerate() {
-            let sprite = (*byte as u64) << (63 - 8 - x);
-            display[(y + i as u8) as usize] ^= sprite;
+        *vf = 0; // reset vf flag
 
-            //check for erased pixels
-            let current = display[(y + i as u8) as usize];
-            let erased = (current >> (63 - (y + 5))) as u8 == *byte;
-            if erased {
-                *vf = 1;
-            } else {
-                *vf = 0;
+        for (row, sprite_byte) in sprite.iter().enumerate() {
+            let overflow = (x % 64) as u32;
+            let data = ((*sprite_byte as u64) << 56).rotate_right(overflow);
+
+            let line = &mut display[(y as usize) + row];
+
+            // check collision
+            if data & *line != 0 {
+                *vf = 1
             }
+
+            *line ^= data;
         }
+    }
 
-        // print
-        for line in display {
-            let mut shift = 63;
+    fn render(&self) {
+        for line in self.display {
             println!();
-
-            while shift > 0 {
-                let bit = (*line >> shift) & 0x1;
-
-                if bit == 1 {
-                    print!("x");
-                } else {
-                    print!(" ");
-                }
-
-                shift -= 1;
+            for n in (0..64).rev() {
+                let bit = line >> n & 0x1;
+                print!("{}", if bit != 0 { " " } else { "x" })
             }
         }
     }
@@ -215,6 +208,7 @@ impl Chip8 {
                     &mut self.registers[0xf],
                     sprite_data,
                 );
+                self.render();
             }
             0xE => todo!(),
             0xF => match kk {
