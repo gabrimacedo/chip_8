@@ -1,3 +1,5 @@
+use std::{thread::sleep, time::Duration};
+
 use rand::{Rng, rngs::ThreadRng};
 
 fn main() {
@@ -5,22 +7,23 @@ fn main() {
 
     let instructions = [
         0x611C, // load coord (x) 30 into v1
-        0x621C, // load coord (y) 11 into v2
-        0xA032, // Set I to adrress of sprite 'A'
+        0x620B, // load coord (y) 11 into v2
+        0x630f, // load letter into V3
+        0xF329, // Load sprite memory location stored in V3 to I
+        0x00E0, // clear display
         0xD125, // display 5 bytes wide letter stored in I
-                // 0x620D, // load coord (y) 13 into v2
-                // 0xA041, // Set I to adrress of sprite 'D'
-                // 0xD125, // display 5 bytes wide letter stored in I
+        0x7101, // increment V1 by 1
+        0x1208, // jump to mem[0x206]
     ];
 
     chip.load_instructions(&instructions);
 
-    for _ in instructions {
+    loop {
+        sleep(Duration::from_millis(16));
+
         let op = chip.fetch();
         chip.decode(op);
     }
-
-    dbg!(chip.v(0xf));
 }
 
 struct Chip8 {
@@ -34,7 +37,7 @@ struct Chip8 {
 
 impl Chip8 {
     fn new() -> Self {
-        let digit_sprites: [[u8; 5]; 15] = [
+        let digit_sprites: [[u8; 5]; 16] = [
             [0xf0, 0x90, 0x90, 0x90, 0xf0], // 0
             [0x20, 0x60, 0x20, 0x20, 0x70], // 1
             [0xf0, 0x10, 0xf0, 0x80, 0xf0], // 2
@@ -49,6 +52,7 @@ impl Chip8 {
             [0xe0, 0x90, 0xe0, 0x90, 0xe0], // B
             [0xf0, 0x80, 0x80, 0x80, 0xf0], // C
             [0xe0, 0x90, 0x90, 0x90, 0xe0], // D
+            [0xf0, 0x80, 0xf0, 0x80, 0xf0], // E
             [0xf0, 0x80, 0xf0, 0x80, 0x80], // F
         ];
 
@@ -87,17 +91,19 @@ impl Chip8 {
             }
 
             *line ^= data;
+            Chip8::render(display);
         }
     }
 
-    fn render(&self) {
-        for line in self.display {
+    fn render(display: &[u64; 32]) {
+        for line in display {
             println!();
             for n in (0..64).rev() {
                 let bit = line >> n & 0x1;
                 print!("{}", if bit != 0 { " " } else { "x" })
             }
         }
+        println!();
     }
 
     fn load_instructions(&mut self, instructions: &[u16]) {
@@ -141,7 +147,9 @@ impl Chip8 {
         self.pc += 2;
 
         match op_code {
-            0x0 => todo!(),
+            0x0 => {
+                self.display.iter_mut().for_each(|line| *line = 0);
+            }
             0x1 => self.pc = adrr,
             0x2 => todo!(),
             0x3 => {
@@ -208,7 +216,6 @@ impl Chip8 {
                     &mut self.registers[0xf],
                     sprite_data,
                 );
-                self.render();
             }
             0xE => todo!(),
             0xF => match kk {
@@ -218,7 +225,9 @@ impl Chip8 {
                 0x18 => todo!(),
                 0x1E => self.i += vx as u16,
                 // sprite data (0 - F) starts at adrr 0, and are 5 bytes long
-                0x29 => self.i = self.memory[(vx * 5) as usize] as u16,
+                0x29 => {
+                    self.i = (vx * 5) as u16;
+                }
                 0x33 => todo!(),
                 0x55 => todo!(),
                 0x65 => todo!(),
@@ -226,7 +235,6 @@ impl Chip8 {
             },
             _ => println!("Invalid instruction code: {op_code}"),
         }
-        println!("Counter is {}", self.pc)
     }
 }
 
@@ -238,12 +246,9 @@ mod test {
     fn display_letters() {
         let mut chip = Chip8::new();
         let instructions = [
-            0x611E, // load coord (x) 30 into v1
-            0x620B, // load coord (y) 11 into v2
+            0x611C, // load coord (x) 30 into v
+            0x621C, // load coord (y) 11 into v2
             0xA032, // Set I to adrress of sprite 'A'
-            0xD125, // display 5 bytes wide letter stored in I
-            0x620D, // load coord (y) 13 into v2
-            0xA041, // Set I to adrress of sprite 'D'
             0xD125, // display 5 bytes wide letter stored in I
         ];
 
