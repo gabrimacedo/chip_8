@@ -1,9 +1,9 @@
-use std::{thread::sleep, time::Duration};
-
 use rand::{Rng, rngs::ThreadRng};
+use std::{thread::sleep, time::Duration};
 
 fn main() {
     let mut chip = Chip8::new();
+    let clock_speed = 300;
 
     let instructions = [
         0x611C, // load coord (x) 30 into v1
@@ -19,10 +19,12 @@ fn main() {
     chip.load_instructions(&instructions);
 
     loop {
-        sleep(Duration::from_millis(16));
-
         let op = chip.fetch();
         chip.decode(op);
+
+        sleep(Duration::from_millis(
+            ((1.0 / clock_speed as f32) * 1000.0).ceil() as u64,
+        ));
     }
 }
 
@@ -30,8 +32,12 @@ struct Chip8 {
     memory: [u8; 4096],
     registers: [u8; 16],
     display: [u64; 32],
+    stack: [u16; 16],
+    sp: u8,
     pc: u16,
     i: u16,
+    dt: u8,
+    st: u8,
     rng: ThreadRng,
 }
 
@@ -72,6 +78,8 @@ impl Chip8 {
             display: [0; 32],
             i: 0,
             pc: 0x200,
+            dt: 0,
+            st: 9,
             rng: rand::thread_rng(),
         }
     }
@@ -91,12 +99,11 @@ impl Chip8 {
             }
 
             *line ^= data;
-            Chip8::render(display);
         }
     }
 
-    fn render(display: &[u64; 32]) {
-        for line in display {
+    fn render(&self) {
+        for line in self.display {
             println!();
             for n in (0..64).rev() {
                 let bit = line >> n & 0x1;
@@ -216,21 +223,30 @@ impl Chip8 {
                     &mut self.registers[0xf],
                     sprite_data,
                 );
+                self.render();
             }
             0xE => todo!(),
             0xF => match kk {
-                0x07 => todo!(),
+                0x07 => self.set_v(x, self.dt),
                 0x0A => todo!(),
-                0x15 => todo!(),
-                0x18 => todo!(),
+                0x15 => self.dt = vx,
+                0x18 => self.st = vx,
                 0x1E => self.i += vx as u16,
                 // sprite data (0 - F) starts at adrr 0, and are 5 bytes long
                 0x29 => {
                     self.i = (vx * 5) as u16;
                 }
                 0x33 => todo!(),
-                0x55 => todo!(),
-                0x65 => todo!(),
+                0x55 => {
+                    let i = self.i as usize;
+                    self.memory[i..=i + (x as usize)]
+                        .copy_from_slice(&self.registers[0..=x as usize]);
+                }
+                0x65 => {
+                    let i = self.i as usize;
+                    self.registers[0..=x as usize]
+                        .copy_from_slice(&self.memory[i..=i + (x as usize)]);
+                }
                 _ => println!("Invalid instruction code: {op_code}"),
             },
             _ => println!("Invalid instruction code: {op_code}"),
