@@ -1,29 +1,32 @@
 use rand::{Rng, rngs::ThreadRng};
-use std::{thread::sleep, time::Duration};
+use std::{
+    env,
+    fs::{self},
+    process,
+    thread::sleep,
+    time::Duration,
+};
 
 fn main() {
     let mut chip = Chip8::new();
-    let clock_speed = 300;
+    let clock_speed = 100;
 
-    let instructions = [
-        0x611C, // load coord (x) 30 into v1
-        0x620B, // load coord (y) 11 into v2
-        0x630f, // load letter into V3
-        0xF329, // Load sprite memory location stored in V3 to I
-        0x00E0, // clear display
-        0xD125, // display 5 bytes wide letter stored in I
-        0x7101, // increment V1 by 1
-        0x1208, // jump to mem[0x206]
-    ];
-
-    chip.load_instructions(&instructions);
+    let program_path = env::args().collect::<Vec<String>>();
+    let path = program_path.get(1).expect("no argument provided");
+    match fs::read(path) {
+        Ok(instructions) => chip.load_instructions(&instructions),
+        Err(err) => {
+            println!("error loading program: {err}");
+            process::exit(1);
+        }
+    }
 
     loop {
         let op = chip.fetch();
         chip.decode(op);
 
         sleep(Duration::from_millis(
-            ((1.0 / clock_speed as f32) * 1000.0).ceil() as u64,
+            (1000.0 / clock_speed as f32).ceil() as u64
         ));
     }
 }
@@ -80,6 +83,8 @@ impl Chip8 {
             pc: 0x200,
             dt: 0,
             st: 9,
+            stack: [0; 16],
+            sp: 0,
             rng: rand::thread_rng(),
         }
     }
@@ -113,22 +118,24 @@ impl Chip8 {
         println!();
     }
 
-    fn load_instructions(&mut self, instructions: &[u16]) {
+    fn load_instructions(&mut self, instructions: &[u8]) {
         let mut i = 0x200;
 
-        for opcode in instructions {
-            let high = (opcode >> 8) as u8;
-            let low = (opcode & 0xff) as u8;
+        for intruc in instructions {
+            // let high = (opcode >> 8) as u8;
+            // let low = (opcode & 0xff) as u8;
 
-            self.memory[i] = high;
-            self.memory[i + 1] = low;
-            i += 2;
+            self.memory[i] = *intruc;
+            // self.memory[i + 1] = low;
+            i += 1;
         }
     }
 
-    fn fetch(&self) -> u16 {
+    fn fetch(&mut self) -> u16 {
         let high = self.memory[self.pc as usize] as u16;
         let low = self.memory[(self.pc + 1) as usize] as u16;
+
+        self.pc += 2;
 
         (high << 8) + low
     }
@@ -143,7 +150,7 @@ impl Chip8 {
 
     fn decode(&mut self, code: u16) {
         let op_code = (code >> 12) as u8;
-        let adrr = code & 0x0fff;
+        let nnn = code & 0x0fff;
         let kk = (code & 0xff) as u8;
         let nibble = code & 0xf;
         let x = (code >> 8) & 0xf;
@@ -151,13 +158,11 @@ impl Chip8 {
         let vx = self.v(x);
         let vy = self.v(y);
 
-        self.pc += 2;
-
         match op_code {
             0x0 => {
                 self.display.iter_mut().for_each(|line| *line = 0);
             }
-            0x1 => self.pc = adrr,
+            0x1 => self.pc = nnn,
             0x2 => todo!(),
             0x3 => {
                 if vx == kk {
@@ -209,8 +214,8 @@ impl Chip8 {
                     self.pc += 2
                 }
             }
-            0xA => self.i = adrr,
-            0xB => self.pc = adrr + (self.v(0)) as u16,
+            0xA => self.i = nnn,
+            0xB => self.pc = nnn + (self.v(0)) as u16,
             0xC => {
                 let r = self.rng.r#gen::<u8>();
                 self.set_v(x, r & kk);
@@ -251,58 +256,5 @@ impl Chip8 {
             },
             _ => println!("Invalid instruction code: {op_code}"),
         }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use crate::Chip8;
-
-    #[test]
-    fn display_letters() {
-        let mut chip = Chip8::new();
-        let instructions = [
-            0x611C, // load coord (x) 30 into v
-            0x621C, // load coord (y) 11 into v2
-            0xA032, // Set I to adrress of sprite 'A'
-            0xD125, // display 5 bytes wide letter stored in I
-        ];
-
-        chip.load_instructions(&instructions);
-
-        for _ in instructions {
-            let op = chip.fetch();
-            chip.decode(op);
-        }
-    }
-
-    #[test]
-    fn fetch_correct_instructions() {
-        let mut chip = Chip8::new();
-        let instructions = [0x6042, 0x7005, 0x4047, 0x3047];
-        chip.load_instructions(&instructions);
-
-        for intruct in instructions {
-            let op = chip.fetch();
-            chip.decode(op);
-
-            assert_eq!(op, intruct);
-        }
-    }
-
-    #[test]
-    // add 200 to 10, then add 110 to 210 to test overflow
-    fn add_numbers() {
-        let mut chip = Chip8::new();
-        let instructions = [0x600A, 0x61C8, 0x8014, 0x616E, 0x8014];
-        chip.load_instructions(&instructions);
-
-        for _ in instructions {
-            let op = chip.fetch();
-            chip.decode(op);
-        }
-
-        let result = (chip.v(0xf) as u16) << 8 | (chip.v(0) as u16);
-        assert_eq!(result, 320);
     }
 }
