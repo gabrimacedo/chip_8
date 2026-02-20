@@ -21,14 +21,6 @@ fn main() -> io::Result<()> {
         }
     }
 
-    // 700 mhz = 700 instructions per second
-    // or 1 instruction per 1_000_000 / 700 microseconds
-    let clock_speed = 700.0;
-    let intruction_interval = 1_000_000.0 / clock_speed;
-
-    let cycles_per_tick = ((1_000_000.0 / 60.0) / intruction_interval) as u64;
-    let mut cycle_counter = 0;
-
     let mut window = match Window::new("Test", 640, 320, WindowOptions::default()) {
         Ok(win) => win,
         Err(err) => {
@@ -38,59 +30,62 @@ fn main() -> io::Result<()> {
     };
     window.set_target_fps(0);
 
+    let clock_speed = 1400.0;
+    let frame_rate = 120.0;
+
+    let target_frame_duration = Duration::from_millis((1_000.0 / frame_rate) as u64);
+    let cycles_per_frame = (clock_speed / frame_rate) as u64;
+
     loop {
-        let start = Instant::now();
-        // 60Hz timers
-        if cycle_counter % cycles_per_tick == 0 {
-            // decrease timers
-            if chip.dt > 0 {
-                chip.dt -= 1;
-            }
-            if chip.st > 0 {
-                chip.st -= 1;
-            }
+        let frame_start = Instant::now();
 
-            // render display
-            if chip.draw_flag {
-                chip.render();
-                chip.draw_flag = false;
-
-                window
-                    .update_with_buffer(&chip.display_buffer, 640, 320)
-                    .expect("Could not update bufffer");
+        // run cycles for this frame
+        for _ in 0..cycles_per_frame {
+            match chip.state {
+                CpuState::Running => {
+                    let op = chip.fetch();
+                    chip.decode(op);
+                }
+                CpuState::WaitingForKey { register } => {
+                    if let Some(key) = chip.get_any_pressed_key() {
+                        chip.set_v(register, key);
+                        chip.state = CpuState::WaitingForRelease { register, key };
+                    }
+                }
+                CpuState::WaitingForRelease { register, key } => {
+                    if !chip.is_key_pressed(key) {
+                        chip.set_v(register, key);
+                        chip.state = CpuState::Running
+                    }
+                }
             }
-
-            // when it reaches cycles_per_tick, reset to 0
-            cycle_counter = 0;
-        } else {
-            window.update();
         }
-        cycle_counter += 1;
 
+        // update 60Hz timers
+        if chip.dt > 0 {
+            chip.dt -= 1;
+        }
+        if chip.st > 0 {
+            chip.st -= 1;
+        }
+
+        // render display if needed
+        if chip.draw_flag {
+            chip.render();
+            chip.draw_flag = false;
+        }
+
+        // poll input
+        window
+            .update_with_buffer(&chip.display_buffer, 640, 320)
+            .expect("Could not update bufffer");
         chip.update_keys(&window);
 
-        match chip.state {
-            CpuState::Running => {
-                let op = chip.fetch();
-                chip.decode(op);
-            }
-            CpuState::WaitingForKey { register } => {
-                if let Some(key) = chip.get_any_pressed_key() {
-                    chip.set_v(register, key);
-                    chip.state = CpuState::WaitingForRelease { register, key };
-                }
-            }
-            CpuState::WaitingForRelease { register, key } => {
-                if !chip.is_key_pressed(key) {
-                    chip.set_v(register, key);
-                    chip.state = CpuState::Running
-                }
-            }
+        // sleep until full end of frame
+        if frame_start.elapsed() < target_frame_duration {
+            sleep(target_frame_duration - frame_start.elapsed());
         }
-
-        sleep(Duration::from_micros(intruction_interval as u64));
-
-        println!("{:?}", start.elapsed());
+        // println!("rendering at: {:?}", frame_start.elapsed());
     }
 }
 
