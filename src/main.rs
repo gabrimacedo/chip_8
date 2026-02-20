@@ -12,6 +12,33 @@ use std::{
 fn main() -> io::Result<()> {
     let mut chip = Chip8::new();
 
+    // setup Beep
+    let params = tinyaudio::OutputDeviceParameters {
+        channels_count: 1,
+        sample_rate: 44100,
+        channel_sample_count: 735, // 44100 / 60 = one frame's worth
+    };
+
+    let mut phase = 0.0f32;
+    let beeping = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let beeping_clone = beeping.clone();
+
+    let _device = tinyaudio::run_output_device(params, move |buf| {
+        for sample in buf.iter_mut() {
+            if beeping_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                *sample = (phase * 2.0 * std::f32::consts::PI).sin() * 0.25;
+                phase += 440.0 / 44100.0;
+                if phase >= 1.0 {
+                    phase -= 1.0;
+                }
+            } else {
+                *sample = 0.0;
+            }
+        }
+    })
+    .unwrap();
+
+    // load program
     let program_path = env::args().nth(1).expect("no argument provided");
     match fs::read(&program_path) {
         Ok(instructions) => chip.load_instructions(&instructions),
@@ -21,6 +48,7 @@ fn main() -> io::Result<()> {
         }
     }
 
+    // initialize window
     let mut window = match Window::new("Test", 640, 320, WindowOptions::default()) {
         Ok(win) => win,
         Err(err) => {
@@ -28,14 +56,15 @@ fn main() -> io::Result<()> {
             process::exit(1);
         }
     };
-    window.set_target_fps(0);
 
-    let clock_speed = 1400.0;
-    let frame_rate = 120.0;
+    // config
+    let clock_speed = 700.0;
+    let frame_rate = 60.0;
 
     let target_frame_duration = Duration::from_millis((1_000.0 / frame_rate) as u64);
     let cycles_per_frame = (clock_speed / frame_rate) as u64;
 
+    // Main loop
     loop {
         let frame_start = Instant::now();
 
@@ -61,6 +90,7 @@ fn main() -> io::Result<()> {
             }
         }
 
+        beeping.store(chip.st > 0, std::sync::atomic::Ordering::Relaxed);
         // update 60Hz timers
         if chip.dt > 0 {
             chip.dt -= 1;
@@ -85,7 +115,6 @@ fn main() -> io::Result<()> {
         if frame_start.elapsed() < target_frame_duration {
             sleep(target_frame_duration - frame_start.elapsed());
         }
-        // println!("rendering at: {:?}", frame_start.elapsed());
     }
 }
 
@@ -163,12 +192,18 @@ impl Chip8 {
 
     fn draw(display: &mut [u64; 32], (x, y): (u8, u8), vf: &mut u8, sprite: &[u8]) {
         *vf = 0; // reset vf flag
+        let x = x % 64;
+        let y = y % 32;
 
         for (row, sprite_byte) in sprite.iter().enumerate() {
-            let overflow = (x % 64) as u32;
-            let data = ((*sprite_byte as u64) << 56).rotate_right(overflow);
+            // let hor_overflow = (x % 64) as u32;
+            let data = ((*sprite_byte as u64) << 56) >> x;
 
-            let line = &mut display[((y as usize) + row) % 32];
+            let row_y = (y as usize) + row;
+            if row_y > 31 {
+                break;
+            }
+            let line = &mut display[row_y];
 
             // check collision
             if data & *line != 0 {
@@ -315,9 +350,18 @@ impl Chip8 {
             0x7 => self.set_v(x, vx.wrapping_add(kk)),
             0x8 => match nibble {
                 0x0 => self.set_v(x, vy),
-                0x1 => self.set_v(x, vx | vy),
-                0x2 => self.set_v(x, vx & vy),
-                0x3 => self.set_v(x, vx ^ vy),
+                0x1 => {
+                    self.set_v(x, vx | vy);
+                    self.set_v(0xf, 0);
+                }
+                0x2 => {
+                    self.set_v(x, vx & vy);
+                    self.set_v(0xf, 0);
+                }
+                0x3 => {
+                    self.set_v(x, vx ^ vy);
+                    self.set_v(0xf, 0);
+                }
                 0x4 => {
                     let sum = vx as u16 + vy as u16;
                     self.set_v(x, sum as u8);
@@ -328,16 +372,16 @@ impl Chip8 {
                     self.set_v(0xf, (vx >= vy) as u8);
                 }
                 0x6 => {
-                    self.set_v(x, vx.wrapping_shr(1));
-                    self.set_v(0xf, (vx & 0x1 == 1) as u8);
+                    self.set_v(x, vy.wrapping_shr(1));
+                    self.set_v(0xf, (vy & 0x1 == 1) as u8);
                 }
                 0x7 => {
                     self.set_v(x, vy.wrapping_sub(vx));
                     self.set_v(0xf, (vy >= vx) as u8);
                 }
                 0xE => {
-                    self.set_v(x, vx.wrapping_shl(1));
-                    self.set_v(0xf, ((vx >> 7) & 0x1 == 1) as u8);
+                    self.set_v(x, vy.wrapping_shl(1));
+                    self.set_v(0xf, ((vy >> 7) & 0x1 == 1) as u8);
                 }
                 _ => println!("Invalid instruction code: 0x{:x}", code),
             },
@@ -397,11 +441,13 @@ impl Chip8 {
                     let i = self.i as usize;
                     self.memory[i..=i + (x as usize)]
                         .copy_from_slice(&self.registers[0..=x as usize]);
+                    self.i += x + 1;
                 }
                 0x65 => {
                     let i = self.i as usize;
                     self.registers[0..=x as usize]
                         .copy_from_slice(&self.memory[i..=i + (x as usize)]);
+                    self.i += x + 1;
                 }
                 _ => println!("Invalid instruction code: 0x{:x}", code),
             },
