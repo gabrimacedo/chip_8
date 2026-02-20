@@ -6,7 +6,7 @@ use std::{
     io::{self},
     process,
     thread::sleep,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 fn main() -> io::Result<()> {
@@ -39,12 +39,7 @@ fn main() -> io::Result<()> {
     window.set_target_fps(0);
 
     loop {
-        window
-            .update_with_buffer(&chip.display_buffer, 640, 320)
-            .expect("Could not update bufffer");
-
-        chip.update_keys(&window);
-
+        let start = Instant::now();
         // 60Hz timers
         if cycle_counter % cycles_per_tick == 0 {
             // decrease timers
@@ -59,12 +54,20 @@ fn main() -> io::Result<()> {
             if chip.draw_flag {
                 chip.render();
                 chip.draw_flag = false;
+
+                window
+                    .update_with_buffer(&chip.display_buffer, 640, 320)
+                    .expect("Could not update bufffer");
             }
 
             // when it reaches cycles_per_tick, reset to 0
             cycle_counter = 0;
+        } else {
+            window.update();
         }
         cycle_counter += 1;
+
+        chip.update_keys(&window);
 
         match chip.state {
             CpuState::Running => {
@@ -86,6 +89,8 @@ fn main() -> io::Result<()> {
         }
 
         sleep(Duration::from_micros(intruction_interval as u64));
+
+        println!("{:?}", start.elapsed());
     }
 }
 
