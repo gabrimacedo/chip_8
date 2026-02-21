@@ -1,4 +1,5 @@
-use minifb::{Key, Window, WindowOptions};
+pub mod chip8;
+
 use rand::{Rng, rngs::ThreadRng};
 use std::{
     env,
@@ -9,9 +10,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-fn main() -> io::Result<()> {
-    let mut chip = Chip8::new();
+use crate::chip8::{Display, Input};
 
+fn main() -> io::Result<()> {
     // setup Beep
     let params = tinyaudio::OutputDeviceParameters {
         channels_count: 1,
@@ -38,6 +39,11 @@ fn main() -> io::Result<()> {
     })
     .unwrap();
 
+    let mut chip = Chip8::new(
+        Display::build(640, 320).expect("could not create window"),
+        Input::default(),
+    );
+
     // load program
     let program_path = env::args().nth(1).expect("no argument provided");
     match fs::read(&program_path) {
@@ -47,16 +53,6 @@ fn main() -> io::Result<()> {
             process::exit(1);
         }
     }
-
-    // initialize window
-    let mut window = match Window::new("Test", 640, 320, WindowOptions::default()) {
-        Ok(win) => win,
-        Err(err) => {
-            println!("Unable to crate window {}", err);
-            process::exit(1);
-        }
-    };
-
     // config
     let clock_speed = 700.0;
     let frame_rate = 60.0;
@@ -76,13 +72,13 @@ fn main() -> io::Result<()> {
                     chip.decode(op);
                 }
                 CpuState::WaitingForKey { register } => {
-                    if let Some(key) = chip.get_any_pressed_key() {
+                    if let Some(key) = chip.input.get_any_pressed_key() {
                         chip.set_v(register, key);
                         chip.state = CpuState::WaitingForRelease { register, key };
                     }
                 }
                 CpuState::WaitingForRelease { register, key } => {
-                    if !chip.is_key_pressed(key) {
+                    if !chip.input.is_key_pressed(key) {
                         chip.set_v(register, key);
                         chip.state = CpuState::Running
                     }
@@ -100,16 +96,10 @@ fn main() -> io::Result<()> {
         }
 
         // render display if needed
-        if chip.draw_flag {
-            chip.render();
-            chip.draw_flag = false;
-        }
+        chip.display.render();
 
         // poll input
-        window
-            .update_with_buffer(&chip.display_buffer, 640, 320)
-            .expect("Could not update bufffer");
-        chip.update_keys(&window);
+        chip.input.poll_input(chip.display.window());
 
         // sleep until full end of frame
         if frame_start.elapsed() < target_frame_duration {
@@ -127,10 +117,9 @@ enum CpuState {
 struct Chip8 {
     state: CpuState,
     memory: [u8; 4096],
+    display: Display,
+    input: Input,
     registers: [u8; 16],
-    display: [u64; 32],
-    display_buffer: Vec<u32>,
-    draw_flag: bool,
     stack: [u16; 16],
     sp: u8,
     pc: u16,
@@ -138,11 +127,10 @@ struct Chip8 {
     dt: u8,
     st: u8,
     rng: ThreadRng,
-    keys: [bool; 16],
 }
 
 impl Chip8 {
-    fn new() -> Self {
+    fn new(display: Display, input: Input) -> Self {
         let digit_sprites: [[u8; 5]; 16] = [
             [0xf0, 0x90, 0x90, 0x90, 0xf0], // 0
             [0x20, 0x60, 0x20, 0x20, 0x70], // 1
@@ -175,10 +163,9 @@ impl Chip8 {
         Chip8 {
             state: CpuState::Running,
             memory,
+            display,
+            input,
             registers: [0; 16],
-            display: [0; 32],
-            display_buffer: vec![0; 640 * 320],
-            draw_flag: false,
             i: 0,
             pc: 0x200,
             dt: 0,
@@ -186,62 +173,6 @@ impl Chip8 {
             stack: [0; 16],
             sp: 0,
             rng: rand::thread_rng(),
-            keys: [false; 16],
-        }
-    }
-
-    fn draw(display: &mut [u64; 32], (x, y): (u8, u8), vf: &mut u8, sprite: &[u8]) {
-        *vf = 0; // reset vf flag
-        let x = x % 64;
-        let y = y % 32;
-
-        for (row, sprite_byte) in sprite.iter().enumerate() {
-            // let hor_overflow = (x % 64) as u32;
-            let data = ((*sprite_byte as u64) << 56) >> x;
-
-            let row_y = (y as usize) + row;
-            if row_y > 31 {
-                break;
-            }
-            let line = &mut display[row_y];
-
-            // check collision
-            if data & *line != 0 {
-                *vf = 1
-            }
-
-            *line ^= data;
-        }
-    }
-
-    fn render(&mut self) {
-        let window_width = 640;
-
-        fn u8_to_rgb(r: u8, g: u8, b: u8) -> u32 {
-            let mut rgb: u32 = 0;
-            rgb |= (r as u32) << 16;
-            rgb |= (g as u32) << 8;
-            rgb |= b as u32;
-
-            rgb
-        }
-
-        for (row, num) in self.display.iter().enumerate() {
-            for shift in (0..64).rev() {
-                let bit = num >> shift & 0x1;
-
-                for i in 0..10 {
-                    let x = ((63 - shift) * 10) + i;
-                    for j in 0..10 {
-                        let y = row * 10 * window_width + (j * window_width);
-                        self.display_buffer[x + y] = if bit != 0 {
-                            u8_to_rgb(255, 255, 255)
-                        } else {
-                            u8_to_rgb(0, 0, 0)
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -269,38 +200,6 @@ impl Chip8 {
         self.registers[reg as usize] = value;
     }
 
-    fn get_any_pressed_key(&self) -> Option<u8> {
-        for (i, &pressed) in self.keys.iter().enumerate() {
-            if pressed {
-                return Some(i as u8);
-            }
-        }
-        None
-    }
-
-    fn update_keys(&mut self, window: &Window) {
-        self.keys[0] = window.is_key_down(Key::Key0);
-        self.keys[1] = window.is_key_down(Key::Key1);
-        self.keys[2] = window.is_key_down(Key::Key2);
-        self.keys[3] = window.is_key_down(Key::Key3);
-        self.keys[4] = window.is_key_down(Key::Key4);
-        self.keys[5] = window.is_key_down(Key::Key5);
-        self.keys[6] = window.is_key_down(Key::Key6);
-        self.keys[7] = window.is_key_down(Key::Key7);
-        self.keys[8] = window.is_key_down(Key::Key8);
-        self.keys[9] = window.is_key_down(Key::Key9);
-        self.keys[0xA] = window.is_key_down(Key::A);
-        self.keys[0xB] = window.is_key_down(Key::B);
-        self.keys[0xC] = window.is_key_down(Key::C);
-        self.keys[0xD] = window.is_key_down(Key::D);
-        self.keys[0xE] = window.is_key_down(Key::E);
-        self.keys[0xF] = window.is_key_down(Key::F);
-    }
-
-    fn is_key_pressed(&self, key: u8) -> bool {
-        self.keys[key as usize]
-    }
-
     fn decode(&mut self, code: u16) {
         let op_code = code >> 12;
         let nnn = code & 0x0fff;
@@ -316,8 +215,7 @@ impl Chip8 {
         match op_code {
             0x0 => match kk {
                 0xE0 => {
-                    self.display.iter_mut().for_each(|line| *line = 0);
-                    self.draw_flag = true;
+                    self.display.clear_vram();
                 }
                 0xEE => {
                     self.sp -= 1;
@@ -398,22 +296,17 @@ impl Chip8 {
             }
             0xD => {
                 let sprite_data = &self.memory[self.i as usize..(self.i + nibble) as usize];
-                Self::draw(
-                    &mut self.display,
-                    (vx, vy),
-                    &mut self.registers[0xf],
-                    sprite_data,
-                );
-                self.draw_flag = true;
+                self.display
+                    .draw_to_vram((vx, vy), &mut self.registers[0xf], sprite_data);
             }
             0xE => match kk {
                 0x9E => {
-                    if self.is_key_pressed(vx) {
+                    if self.input.is_key_pressed(vx) {
                         self.pc += 2;
                     }
                 }
                 0xA1 => {
-                    if !self.is_key_pressed(vx) {
+                    if !self.input.is_key_pressed(vx) {
                         self.pc += 2;
                     }
                 }
