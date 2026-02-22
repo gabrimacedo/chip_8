@@ -11,7 +11,7 @@ fn main() {
     let program_path = env::args().nth(1).expect("no argument provided");
     let instructions = fs::read(&program_path).expect("Could not load program");
 
-    let clock_speed = 700.0;
+    let clock_speed = 900.0;
     let target_frame_rate = 60.0;
 
     chip8::run(ChipConfig::new(

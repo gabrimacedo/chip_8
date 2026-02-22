@@ -27,11 +27,13 @@ impl Audio {
         })
     }
 
-    pub fn start_beep(&self) {
+    pub fn start_beep(&mut self) {
         self.player.play();
+        self.beeping_state = BeepingState::Beeping;
     }
 
-    pub fn stop_beep(&self) {
+    pub fn stop_beep(&mut self) {
         self.player.pause();
+        self.beeping_state = BeepingState::Stopped;
     }
 }

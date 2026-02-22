@@ -6,11 +6,6 @@ pub struct Input {
 }
 
 impl Input {
-    pub fn poll(&mut self, window: &mut Window) {
-        window.update();
-        self.update_keys(window);
-    }
-
     pub fn is_key_pressed(&self, key: u8) -> bool {
         self.keys[key as usize]
     }
@@ -24,7 +19,7 @@ impl Input {
         None
     }
 
-    fn update_keys(&mut self, window: &Window) {
+    pub fn poll(&mut self, window: &Window) {
         self.keys[0] = window.is_key_down(Key::Key0);
         self.keys[1] = window.is_key_down(Key::Key1);
         self.keys[2] = window.is_key_down(Key::Key2);

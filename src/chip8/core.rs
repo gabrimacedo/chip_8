@@ -1,5 +1,4 @@
 use rand::{Rng, rngs::ThreadRng};
-use rodio::source::SineWave;
 
 use crate::chip8::{Audio, BeepingState, Display, Input};
 
@@ -16,14 +15,14 @@ pub struct Chip8 {
     sp: u8,
     pc: u16,
     i: u16,
-    pub dt: u8,
+    dt: u8,
+    st: u8,
     rng: ThreadRng,
 
     pub display: Display,
     pub input: Input,
     pub audio: Audio,
     pub state: CpuState,
-    pub st: u8,
 }
 
 impl Chip8 {
@@ -58,7 +57,6 @@ impl Chip8 {
         }
 
         let mut chip = Chip8 {
-            state: CpuState::Running,
             memory,
             display,
             input,
@@ -67,10 +65,11 @@ impl Chip8 {
             i: 0,
             pc: 0x200,
             dt: 0,
-            st: 9,
+            st: 0,
             stack: [0; 16],
             sp: 0,
             rng: rand::thread_rng(),
+            state: CpuState::Running,
         };
         chip.load_program(instructions);
 
@@ -94,24 +93,24 @@ impl Chip8 {
     }
 
     pub fn update_timers(&mut self) {
+        // Sound Timer
         match self.audio.beeping_state {
             BeepingState::Stopped => {
                 if self.st > 0 {
                     self.audio.start_beep();
-                    self.audio.beeping_state = BeepingState::Beeping;
                     self.st -= 1;
                 }
             }
             BeepingState::Beeping => {
                 if self.st == 0 {
                     self.audio.stop_beep();
-                    self.audio.beeping_state = BeepingState::Stopped;
                 } else {
                     self.st -= 1;
                 }
             }
         }
 
+        // Delay Timer
         if self.dt > 0 {
             self.dt -= 1;
         }
@@ -132,6 +131,8 @@ impl Chip8 {
         let nibble = code & 0xf;
         let x = (code >> 8) & 0xf;
         let y = (code >> 4) & 0xf;
+
+        // helpers
         let vx = self.v(x);
         let vy = self.v(y);
 
