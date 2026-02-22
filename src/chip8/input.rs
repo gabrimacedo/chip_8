@@ -6,7 +6,7 @@ pub struct Input {
 }
 
 impl Input {
-    pub fn poll_input(&mut self, window: &mut Window) {
+    pub fn poll(&mut self, window: &mut Window) {
         window.update();
         self.update_keys(window);
     }

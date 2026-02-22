@@ -1,93 +1,33 @@
-pub mod config;
-pub mod display;
-pub mod input;
-
-use std::{thread::sleep, time::Instant};
-
-pub use config::ChipConfig;
-pub use display::Display;
-pub use input::Input;
 use rand::{Rng, rngs::ThreadRng};
+use rodio::{Player, source::SineWave};
 
-enum CpuState {
+use crate::chip8::{Audio, BeepingState, Display, Input};
+
+pub enum CpuState {
     Running,
     WaitingForKey { register: u16 },
     WaitingForRelease { register: u16, key: u8 },
 }
 
-pub fn run(config: ChipConfig) {
-    // setup Beep
-    let beeping = setup_audio();
-
-    // init chip
-    let mut chip = Chip8::new(
-        Display::build(640, 320).expect("could not create window"),
-        Input::default(),
-        &config.instructions,
-    );
-
-    loop {
-        let frame_start = Instant::now();
-
-        // run cycles for this frame
-        for _ in 0..config.cycles_per_frame {
-            match chip.state {
-                CpuState::Running => {
-                    let op = chip.fetch();
-                    chip.decode(op);
-                }
-                CpuState::WaitingForKey { register } => {
-                    if let Some(key) = chip.input.get_any_pressed_key() {
-                        chip.set_v(register, key);
-                        chip.state = CpuState::WaitingForRelease { register, key };
-                    }
-                }
-                CpuState::WaitingForRelease { register, key } => {
-                    if !chip.input.is_key_pressed(key) {
-                        chip.set_v(register, key);
-                        chip.state = CpuState::Running
-                    }
-                }
-            }
-        }
-
-        beeping.store(chip.st > 0, std::sync::atomic::Ordering::Relaxed);
-        // update 60Hz timers
-        if chip.dt > 0 {
-            chip.dt -= 1;
-        }
-        if chip.st > 0 {
-            chip.st -= 1;
-        }
-
-        chip.display.render();
-
-        chip.input.poll_input(chip.display.window());
-
-        // sleep until full end of frame
-        if frame_start.elapsed() < config.target_frame_duration {
-            sleep(config.target_frame_duration - frame_start.elapsed());
-        }
-    }
-}
-
-struct Chip8 {
-    state: CpuState,
+pub struct Chip8 {
     memory: [u8; 4096],
-    display: Display,
-    input: Input,
     registers: [u8; 16],
     stack: [u16; 16],
     sp: u8,
     pc: u16,
     i: u16,
-    dt: u8,
-    st: u8,
+    pub dt: u8,
     rng: ThreadRng,
+
+    pub display: Display,
+    pub input: Input,
+    pub audio: Audio,
+    pub state: CpuState,
+    pub st: u8,
 }
 
 impl Chip8 {
-    fn new(display: Display, input: Input, instructions: &[u8]) -> Self {
+    pub fn new(display: Display, input: Input, audio: Audio, instructions: &[u8]) -> Self {
         let digit_sprites: [[u8; 5]; 16] = [
             [0xf0, 0x90, 0x90, 0x90, 0xf0], // 0
             [0x20, 0x60, 0x20, 0x20, 0x70], // 1
@@ -122,6 +62,7 @@ impl Chip8 {
             memory,
             display,
             input,
+            audio,
             registers: [0; 16],
             i: 0,
             pc: 0x200,
@@ -136,7 +77,7 @@ impl Chip8 {
         chip
     }
 
-    fn load_program(&mut self, instructions: &[u8]) {
+    pub fn load_program(&mut self, instructions: &[u8]) {
         let mut i = 0x200;
 
         for intruc in instructions {
@@ -145,22 +86,48 @@ impl Chip8 {
         }
     }
 
-    fn fetch(&mut self) -> u16 {
+    pub fn fetch(&mut self) -> u16 {
         let high = self.memory[self.pc as usize] as u16;
         let low = self.memory[(self.pc + 1) as usize] as u16;
 
         (high << 8) + low
     }
 
-    fn v(&self, reg: u16) -> u8 {
+    pub fn update_timers(&mut self) {
+        let source = SineWave::new(440.0);
+
+        match self.audio.beeping_state {
+            BeepingState::Stopped => {
+                if self.st > 0 {
+                    self.audio.player.append(source);
+                    self.audio.beeping_state = BeepingState::Beeping;
+                    self.st -= 1;
+                }
+            }
+            BeepingState::Beeping => {
+                if self.st == 0 {
+                    self.audio.player.stop();
+                    self.audio.beeping_state = BeepingState::Stopped;
+                } else {
+                    self.st -= 1;
+                }
+            }
+        }
+
+        if self.dt > 0 {
+            self.dt -= 1;
+        }
+    }
+
+    pub fn v(&self, reg: u16) -> u8 {
         self.registers[reg as usize]
     }
 
-    fn set_v(&mut self, reg: u16, value: u8) {
+    pub fn set_v(&mut self, reg: u16, value: u8) {
         self.registers[reg as usize] = value;
     }
 
-    fn decode(&mut self, code: u16) {
+    pub fn decode(&mut self, code: u16) {
         let op_code = code >> 12;
         let nnn = code & 0x0fff;
         let kk = (code & 0xff) as u8;
@@ -307,33 +274,4 @@ impl Chip8 {
             _ => println!("Invalid instruction code: 0x{:x}", code),
         }
     }
-}
-
-fn setup_audio() -> std::sync::Arc<std::sync::atomic::AtomicBool> {
-    let params = tinyaudio::OutputDeviceParameters {
-        channels_count: 1,
-        sample_rate: 44100,
-        channel_sample_count: 735, // 44100 / 60 = one frame's worth
-    };
-
-    let mut phase = 0.0f32;
-    let beeping = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let beeping_clone = beeping.clone();
-
-    let _device = tinyaudio::run_output_device(params, move |buf| {
-        for sample in buf.iter_mut() {
-            if beeping_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                *sample = (phase * 2.0 * std::f32::consts::PI).sin() * 0.25;
-                phase += 440.0 / 44100.0;
-                if phase >= 1.0 {
-                    phase -= 1.0;
-                }
-            } else {
-                *sample = 0.0;
-            }
-        }
-    })
-    .unwrap();
-
-    beeping
 }

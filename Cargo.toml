@@ -6,4 +6,5 @@ edition = "2024"
 [dependencies]
 minifb = "0.28.0"
 rand = "0.8"
+rodio = "0.22.0"
 tinyaudio = "2.0.0"
