@@ -1,5 +1,5 @@
 use rand::{Rng, rngs::ThreadRng};
-use rodio::{Player, source::SineWave};
+use rodio::source::SineWave;
 
 use crate::chip8::{Audio, BeepingState, Display, Input};
 
@@ -94,19 +94,17 @@ impl Chip8 {
     }
 
     pub fn update_timers(&mut self) {
-        let source = SineWave::new(440.0);
-
         match self.audio.beeping_state {
             BeepingState::Stopped => {
                 if self.st > 0 {
-                    self.audio.player.append(source);
+                    self.audio.start_beep();
                     self.audio.beeping_state = BeepingState::Beeping;
                     self.st -= 1;
                 }
             }
             BeepingState::Beeping => {
                 if self.st == 0 {
-                    self.audio.player.stop();
+                    self.audio.stop_beep();
                     self.audio.beeping_state = BeepingState::Stopped;
                 } else {
                     self.st -= 1;
